@@ -1,0 +1,33 @@
+# --- SÉCURITÉ (Ne jamais commiter) ---
+*.pem
+*.key
+keys/
+*.env
+.env
+.env.*
+
+# --- Go ---
+# Binaires et fichiers de test compilés
+/bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# --- IDE & OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- INFRASTRUCTURE ---
+# On ignore le dossier de données locales de Postgres/Mongo s'il est dans le projet
+.docker-data/
+postgres-data/
+
+# --- CODE GÉNÉRÉ (Optionnel) ---
+# Deux écoles : 
+# 1. On commit 'gen/' pour que le projet soit compilable direct après un clone.
+# 2. On ignore 'gen/' pour ne pas polluer les diffs (le développeur doit lancer 'make gen-proto').
+# Pour l'instant, je vous conseille de l'ignorer pour garder l'historique propre :
+gen/
