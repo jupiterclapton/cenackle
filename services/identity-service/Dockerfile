@@ -6,9 +6,12 @@ WORKDIR /app
 # 1. On copie d'abord les définitions de modules (pour le cache Docker)
 COPY go.work .
 COPY go.work.sum .
-COPY pkg/go.mod ./pkg/
+COPY pkg/go.mod pkg/go.sum* ./pkg/
 COPY gen/go.mod gen/go.sum ./gen/
+# 3. CORRECTION : Il faut copier TOUS les go.mod déclarés dans le go.work
+# Même ceux qu'on ne compile pas, sinon "go work" plante.
 COPY services/identity-service/go.mod services/identity-service/go.sum ./services/identity-service/
+COPY services/api-gateway/go.mod services/api-gateway/go.sum ./services/api-gateway/
 
 # 2. Téléchargement des dépendances
 RUN go mod download

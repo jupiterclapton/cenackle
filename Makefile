@@ -90,10 +90,10 @@ endif
 .PHONY: gen-gateway
 gen-gateway: ## Génère le code GraphQL (gqlgen)
 	@echo "🔮 Génération des fichiers GraphQL..."
-	@if [ -d "$(SERVICES_DIR)/gateway" ]; then \
-		cd $(SERVICES_DIR)/gateway && $(GO) run github.com/99designs/gqlgen generate; \
+	@if [ -d "$(SERVICES_DIR)/api-gateway" ]; then \
+		cd $(SERVICES_DIR)/api-gateway && $(GO) run github.com/99designs/gqlgen generate; \
 	else \
-		echo "⚠️  Dossier gateway introuvable."; \
+		echo "⚠️  Dossier api-gateway introuvable."; \
 	fi
 
 .PHONY: clean-gen

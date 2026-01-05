@@ -1,0 +1,57 @@
+# --- SCALARS ---
+# On définit un scalar pour gérer les dates proprement (ISO string)
+scalar Time
+
+# --- TYPES ---
+
+type User {
+  id: ID!
+  email: String!
+  username: String!
+  fullName: String!
+  isActive: Boolean!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type AuthPayload {
+  user: User!
+  accessToken: String!
+  refreshToken: String!
+  expiresIn: Int!
+}
+
+# --- INPUTS ---
+
+input RegisterInput {
+  email: String!
+  password: String!
+  username: String!
+  fullName: String!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+input UpdateProfileInput {
+  fullName: String
+  email: String
+}
+
+# --- API ---
+
+type Query {
+  # Récupère l'utilisateur courant (basé sur le Token JWT)
+  me: User!
+}
+
+type Mutation {
+  register(input: RegisterInput!): AuthPayload!
+  login(input: LoginInput!): AuthPayload!
+  
+  refreshToken(token: String!): AuthPayload!
+  
+  updateProfile(input: UpdateProfileInput!): User!
+}
