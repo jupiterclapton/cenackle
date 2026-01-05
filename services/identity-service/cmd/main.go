@@ -25,6 +25,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 
 	// PostgreSQL Driver
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	// Interne
@@ -63,7 +64,18 @@ func main() {
 	}
 
 	// 4. Infrastructure : Base de données (Postgres)
-	dbPool, err := pgxpool.New(ctx, cfg.DBUrl)
+	// 1. On parse la config d'abord
+	dbConfig, err := pgxpool.ParseConfig(cfg.DBUrl)
+	if err != nil {
+		slog.Error("Unable to parse DB config", "error", err)
+		os.Exit(1)
+	}
+
+	// 2. MAGIE ICI : On injecte le tracer OpenTelemetry
+	dbConfig.ConnConfig.Tracer = otelpgx.NewTracer()
+
+	// 3. On crée le pool avec cette config enrichie
+	dbPool, err := pgxpool.NewWithConfig(ctx, dbConfig)
 	if err != nil {
 		slog.Error("Unable to connect to database", "error", err)
 		os.Exit(1)
