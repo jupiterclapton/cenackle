@@ -23,12 +23,12 @@ RUN go work sync
 # 3. Copie du code source complet
 COPY pkg/ ./pkg/
 COPY gen/ ./gen/
-COPY services/identity-service/ ./services/identity-service/
+COPY services/post-service/ ./services/post-service/
 
 # 4. Compilation Statique (pour Alpine/Scratch)
 # On se place dans le dossier du service pour compiler son main
-WORKDIR /app/services/identity-service
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/identity-service cmd/main.go
+WORKDIR /app/services/post-service
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/post-service cmd/main.go
 
 # --- STAGE 2: Runner (Production ready) ---
 FROM alpine:3.19
@@ -43,11 +43,8 @@ RUN addgroup -S cenackle && adduser -S cenackle -G cenackle
 USER cenackle
 
 # Copie du binaire depuis le builder
-COPY --from=builder /app/identity-service .
+COPY --from=builder /app/post-service .
 
-# Copie des clés RSA (Note: En vraie prod k8s, on utiliserait des Secrets montés, pas COPY)
-# Pour le docker compose local, on suppose que les clés sont générées dans /keys
-# COPY --from=builder /app/services/identity-service/keys ./keys 
-# ^ Mieux : On montera les clés via un volume dans le compose
 
-CMD ["./identity-service"]
+
+CMD ["./post-service"]

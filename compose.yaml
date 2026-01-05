@@ -24,6 +24,39 @@ services:
     networks:
       - cenackle-net
 
+  # --- DB: POSTS ---
+  postgres-post:
+    container_name: cenackle-postgres-post
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: post_db
+    ports:
+      - "5433:5432" # Port différent de Identity (5432)
+    volumes:
+      - postgres_post_data:/var/lib/postgresql/data
+      # On monte le script SQL pour qu'il s'exécute au premier lancement
+      - ./services/post-service/db/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - cenackle-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d post_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- DB: REDIS (Feed) ---
+  redis:
+    container_name: cenackle-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - cenackle-net
+
   # --- INFRASTRUCTURE: EVENT BROKER ---
   nats:
     container_name: cenackle-nats
@@ -37,6 +70,26 @@ services:
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8222/healthz"]
       interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- INFRA: NEO4J ---
+  neo4j:
+    container_name: cenackle-neo4j
+    image: neo4j:5.15-community
+    restart: unless-stopped
+    ports:
+      - "7474:7474" # UI HTTP (http://localhost:7474)
+      - "7687:7687" # Bolt Protocol (Client)
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - cenackle-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider http://localhost:7474 || exit 1"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
@@ -67,6 +120,47 @@ services:
     networks:
       - cenackle-net
 
+# --- MICROSERVICE: POST ---
+  post-service:
+    container_name: cenackle-post
+    build:
+      context: .
+      dockerfile: services/post-service/Dockerfile
+    restart: on-failure
+    ports:
+      - "50053:50053" # gRPC port 50053 container mappé à celui du Mac
+    environment:
+      - GRPC_PORT=50053
+      - DB_URL=postgres://user:password@postgres-post:5432/post_db?sslmode=disable
+      - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - APP_ENV=local
+    depends_on:
+      postgres-post:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    networks:
+      - cenackle-net
+
+# --- MICROSERVICE: GRAPH ---
+  graph-service:
+    container_name: cenackle-graph
+    build:
+      context: .
+      dockerfile: services/graph-service/Dockerfile
+    restart: on-failure
+    environment:
+      - GRPC_PORT=50052
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    networks:
+      - cenackle-net
+
 # --- API GATEWAY (BFF) ---
   api-gateway:
     container_name: cenackle-gateway
@@ -88,6 +182,27 @@ services:
     networks:
       - cenackle-net
 
+  # --- MICROSERVICE: FEED ---
+  feed-service:
+    container_name: cenackle-feed
+    build:
+      context: .
+      dockerfile: services/feed-service/Dockerfile
+    restart: on-failure
+    environment:
+      - REDIS_ADDR=redis:6379
+      - NATS_URL=nats://nats:4222
+      - GRAPH_SERVICE_URL=graph-service:50052
+    depends_on:
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+      graph-service:
+        condition: service_started
+    networks:
+      - cenackle-net
+
   # --- OBSERVABILITÉ: JAEGER ---
   jaeger:
     container_name: cenackle-jaeger
@@ -105,6 +220,8 @@ services:
 volumes:
   postgres_data:
   nats_data:
+  neo4j_data:
+  postgres_post_data:
 
 networks:
   cenackle-net:

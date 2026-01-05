@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package post.v1;
+
+option go_package = "github.com/jupiterclapton/cenackle/gen/post/v1;postv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+service PostService {
+  // --- Écriture (Commandes) ---
+  rpc CreatePost(CreatePostRequest) returns (CreatePostResponse);
+  rpc UpdatePost(UpdatePostRequest) returns (UpdatePostResponse);
+  rpc DeletePost(DeletePostRequest) returns (google.protobuf.Empty);
+  
+  // --- Lecture (Queries) ---
+  
+  // 1. Unitaire (Détail d'un post)
+  rpc GetPost(GetPostRequest) returns (GetPostResponse);
+
+  // 2. 👇 CRITIQUE pour le Feed Service (Hydratation)
+  // Le Feed Service envoie une liste d'IDs trouvés dans Redis, le Post Service renvoie le contenu.
+  rpc GetPosts(GetPostsRequest) returns (GetPostsResponse);
+
+  // 3. Page Profil (Tous les posts d'un auteur spécifique)
+  rpc ListPostsByAuthor(ListPostsByAuthorRequest) returns (ListPostsByAuthorResponse);
+}
+
+// --- Modèle Core ---
+
+message Post {
+  string id = 1;
+  string author_id = 2;
+  string content = 3;
+  
+  // On utilise une structure pour savoir si c'est une VIDEO ou une IMAGE
+  // C'est indispensable pour le filtrage du Feed Service.
+  repeated Media media = 4; 
+  
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message Media {
+  string id = 1;   // ID du fichier (ex: S3 key)
+  string url = 2;  // URL publique (ex: CDN) ou vide si calculée côté client
+  string type = 3; // "image", "video", "link"
+}
+
+// --- Requêtes / Réponses ---
+
+message CreatePostRequest {
+  string user_id = 1;
+  string content = 2;
+  repeated Media media = 3; 
+}
+
+message CreatePostResponse {
+  Post post = 1;
+}
+
+message UpdatePostRequest {
+  string post_id = 1;
+  string user_id = 2; // Sécurité
+  string content = 3;
+  repeated Media media = 4;
+}
+
+message UpdatePostResponse {
+  Post post = 1;
+}
+
+message DeletePostRequest {
+  string post_id = 1;
+  string user_id = 2;
+}
+
+// --- Lecture ---
+
+message GetPostRequest {
+  string post_id = 1;
+}
+
+message GetPostResponse {
+  Post post = 1;
+}
+
+// 👇 Nouveau message Batch pour l'hydratation du Feed
+message GetPostsRequest {
+  repeated string post_ids = 1; // La liste brute venant de Redis
+}
+
+message GetPostsResponse {
+  repeated Post posts = 1; // La liste enrichie avec le contenu
+  // Note: Pas de pagination ici, car on demande une liste exacte d'IDs
+}
+
+message ListPostsByAuthorRequest {
+  string author_id = 1;
+  int32 limit = 2;
+  string page_token = 3; // Pagination par curseur (plus robuste que offset)
+}
+
+message ListPostsByAuthorResponse {
+  repeated Post posts = 1;
+  string next_page_token = 2;
+}

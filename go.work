@@ -6,11 +6,11 @@ use (
 	./services/api-gateway
 
 	//./services/chat-service
-	//./services/feed-service
-	//./services/graph-service
+	./services/feed-service
+	./services/graph-service
 	./services/identity-service
-//./services/interaction-service
-//./services/media-service
-//./services/notification-service
-//./services/post-service
+	//./services/interaction-service
+	//./services/media-service
+	//./services/notification-service
+	./services/post-service
 )

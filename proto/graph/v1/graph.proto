@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package graph.v1;
+
+option go_package = "github.com/jupiterclapton/cenackle/gen/graph/v1;graphv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+service GraphService {
+  // --- ACTIONS ---
+  
+  // FollowUser crée un lien dirigé (A -> B)
+  rpc FollowUser (FollowUserRequest) returns (google.protobuf.Empty);
+  
+  // UnfollowUser supprime le lien
+  rpc UnfollowUser (UnfollowUserRequest) returns (google.protobuf.Empty);
+
+  // CheckRelation permet de vérifier l'état (ex: pour afficher "Abonné" ou "S'abonner" sur l'UI)
+  rpc CheckRelation (CheckRelationRequest) returns (CheckRelationResponse);
+
+  // --- LECTURE (UI & FEED) ---
+
+  // GetFollowers (Paginé) : Utilisé par l'UI pour afficher "Mes abonnés".
+  // Utilise la pagination par curseur (plus performant que l'offset sur les gros datasets).
+  rpc GetFollowers (GetFollowersRequest) returns (GetFollowersResponse);
+
+  // GetFollowing (Paginé) : Utilisé par l'UI pour afficher "Mes abonnements".
+  rpc GetFollowing (GetFollowingRequest) returns (GetFollowingResponse);
+
+  // --- LECTURE (SYSTEM / FAN-OUT) ---
+
+  // StreamFollowers : Version EXPERTE pour le Feed Service.
+  // Au lieu de paginer (ce qui est lent pour le système), on ouvre un flux continu.
+  // Le serveur envoie les ID au fur et à mesure qu'il les lit en DB.
+  // Idéal pour récupérer 1M de followers sans exploser la RAM.
+  rpc StreamFollowers (StreamFollowersRequest) returns (stream StreamFollowersResponse);
+}
+
+// --- MESSAGES ---
+
+message FollowUserRequest {
+  string follower_id = 1; // Celui qui suit (Actor)
+  string followee_id = 2; // Celui qui est suivi (Target)
+}
+
+message UnfollowUserRequest {
+  string follower_id = 1;
+  string followee_id = 2;
+}
+
+message CheckRelationRequest {
+  string actor_id = 1;
+  string target_id = 2;
+}
+
+message CheckRelationResponse {
+  bool is_following = 1;     // actor -> target ?
+  bool is_followed_by = 2;   // target -> actor ? (Ami réciproque)
+}
+
+// --- PAGINATION ---
+
+message GetFollowersRequest {
+  string user_id = 1;
+  int32 page_size = 2;       // Combien d'items on veut (ex: 20)
+  string page_token = 3;     // Le curseur pour la page suivante (encodé)
+}
+
+message GetFollowersResponse {
+  // On renvoie un objet riche, pas juste un string, au cas où on voudrait afficher la date
+  repeated Relation relations = 1; 
+  string next_page_token = 2; // Vide si fin de liste
+  int32 total_count = 3;      // Optionnel (coûteux à calculer, à utiliser avec parcimonie)
+}
+
+message GetFollowingRequest {
+  string user_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message GetFollowingResponse {
+  repeated Relation relations = 1;
+  string next_page_token = 2;
+}
+
+// --- STREAMING (Optimisation Feed) ---
+
+message StreamFollowersRequest {
+  string user_id = 1;
+}
+
+message StreamFollowersResponse {
+  // On renvoie par paquets pour réduire l'overhead réseau du gRPC stream
+  repeated string follower_ids = 1; 
+}
+
+// --- ENTITÉS ---
+
+message Relation {
+  string user_id = 1; // L'ID de l'autre personne
+  google.protobuf.Timestamp created_at = 2; // Date du follow
+}
