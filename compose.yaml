@@ -1,0 +1,76 @@
+name: cenackle
+
+services:
+  # --- INFRASTRUCTURE: BASE DE DONNÉES ---
+  postgres-identity:
+    container_name: cenackle-postgres
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: identity_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # LA MAGIE EST ICI : Tout script .sql dans ce dossier est exécuté au premier lancement
+      - ./services/identity-service/db/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d identity_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cenackle-net
+
+  # --- INFRASTRUCTURE: EVENT BROKER ---
+  nats:
+    container_name: cenackle-nats
+    image: nats:2.10-alpine
+    command: "-js -m 8222 -sd /data" # Active JetStream
+    ports:
+      - "4222:4222" # Client Port
+      - "8222:8222" # Monitoring Port
+    networks:
+      - cenackle-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- MICROSERVICE: IDENTITY ---
+  identity-service:
+    container_name: cenackle-identity
+    build:
+      context: . # IMPORTANT: Contexte à la racine pour voir pkg/ et gen/
+      dockerfile: services/identity-service/Dockerfile
+    restart: on-failure
+    ports:
+      - "50051:50051" # gRPC Port
+    environment:
+      - APP_ENV=local
+      - GRPC_PORT=50051
+      - DB_URL=postgres://user:password@postgres-identity:5432/identity_db?sslmode=disable
+      - NATS_URL=nats://nats:4222
+      - RSA_PRIVATE_KEY_PATH=/app/keys/private.pem
+      - RSA_PUBLIC_KEY_PATH=/app/keys/public.pem
+    volumes:
+      # On monte les clés générées localement dans le conteneur
+      - ./services/identity-service/keys:/app/keys:ro
+    depends_on:
+      postgres-identity:
+        condition: service_healthy # Attend que la DB soit prête
+      nats:
+        condition: service_healthy # Attend que Nats soit prêt
+    networks:
+      - cenackle-net
+
+volumes:
+  postgres_data:
+  nats_data:
+
+networks:
+  cenackle-net:
+    driver: bridge
