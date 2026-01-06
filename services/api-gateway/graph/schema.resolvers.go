@@ -102,14 +102,14 @@ func (r *mutationResolver) RefreshToken(ctx context.Context, token string) (*mod
 func (r *mutationResolver) UpdateProfile(ctx context.Context, input model.UpdateProfileInput) (*model.User, error) {
 	// 1. Récupération de l'ID utilisateur depuis le contexte (Middleware)
 	userID := auth.ForContext(ctx)
-	if userID == "" {
+	if userID == nil {
 		return nil, errors.New("unauthorized: you must be logged in")
 	}
 
 	// 2. Appel gRPC
 	// Note : Les pointeurs Input GraphQL (*string) mappent bien vers les pointeurs Protobuf Optional que nous avons définis
 	resp, err := r.IdentityClient.UpdateProfile(ctx, &identityv1.UpdateProfileRequest{
-		UserId:   userID,
+		UserId:   userID.ID,
 		FullName: input.FullName,
 		Email:    input.Email,
 	})
@@ -146,13 +146,13 @@ func (r *postResolver) Author(ctx context.Context, obj *model.Post) (*model.User
 // Me is the resolver for the me field.
 func (r *queryResolver) Me(ctx context.Context) (*model.User, error) {
 	userID := auth.ForContext(ctx)
-	if userID == "" {
+	if userID == nil {
 		return nil, errors.New("unauthorized: you must be logged in")
 	}
 
 	// Appel gRPC GetUser
 	resp, err := r.IdentityClient.GetUser(ctx, &identityv1.GetUserRequest{
-		UserId: userID,
+		UserId: userID.ID,
 	})
 	if err != nil {
 		return nil, err
@@ -167,7 +167,12 @@ func (r *queryResolver) Feed(ctx context.Context, limit *int, offset *int) ([]*m
 	// 1. Récupérer l'ID utilisateur depuis le contexte (JWT Middleware)
 	// (Assumons que vous avez une fonction helper pour ça, sinon hardcodez pour le test)
 	// userID := middleware.GetUserID(ctx)
-	userID := "user-trinity-uuid" // ⚠️ TEMPORAIRE POUR TESTER RAPIDEMENT
+	//userID := "user-trinity-uuid" // ⚠️ TEMPORAIRE POUR TESTER RAPIDEMENT
+	user := auth.ForContext(ctx)
+	if user == nil { // ✅ Correct car 'user' est un pointeur de struct
+		return nil, fmt.Errorf("access denied")
+	}
+	userID := user.ID
 
 	// Valeurs par défaut
 	l := int32(20)
