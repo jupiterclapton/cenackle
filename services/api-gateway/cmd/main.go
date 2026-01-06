@@ -10,19 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	// GraphQL
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
-	"github.com/ravilushqa/otelgqlgen" // Tracing spécifique GraphQL
-
-	// HTTP & CORS
+	"github.com/ravilushqa/otelgqlgen"
 	"github.com/rs/cors"
-
-	// gRPC
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-
-	// OpenTelemetry
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -31,34 +22,29 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
-	// Interne
+	feedv1 "github.com/jupiterclapton/cenackle/gen/feed/v1"
 	identityv1 "github.com/jupiterclapton/cenackle/gen/identity/v1"
+	postv1 "github.com/jupiterclapton/cenackle/gen/post/v1"
+	"github.com/jupiterclapton/cenackle/services/api-gateway/config"
 	"github.com/jupiterclapton/cenackle/services/api-gateway/graph"
 	"github.com/jupiterclapton/cenackle/services/api-gateway/internal/auth"
 )
 
-// Config simple (idéalement dans un package config/)
-type Config struct {
-	Port         string
-	IdentityURL  string
-	OtelEndpoint string
-	Env          string
-}
-
 func main() {
 	// 1. Configuration
-	cfg := loadConfig()
+	cfg := config.Load()
 
-	// Logger JSON structuré
+	// 2. Logger
 	initLogger(cfg)
 	slog.Info("🚀 Starting API Gateway", "config", cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 2. Initialisation Télémétrie (Tracing)
-	// C'est vital de le faire avant tout le reste
+	// 3. Télémétrie (Tracing)
 	tp, err := initTracer(ctx, cfg)
 	if err != nil {
 		slog.Error("Failed to init tracer", "error", err)
@@ -66,81 +52,75 @@ func main() {
 		defer func() { _ = tp.Shutdown(context.Background()) }()
 	}
 
-	// 3. Connexion aux Microservices (avec Tracing gRPC)
-	// L'intercepteur otelgrpc va injecter le TraceID dans les headers gRPC automatiquement
-	conn, err := grpc.NewClient(
-		cfg.IdentityURL,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()), // <--- MAGIE ICI
-	)
-	if err != nil {
-		slog.Error("Failed to connect to identity service", "url", cfg.IdentityURL, "error", err)
-		os.Exit(1)
-	}
-	defer conn.Close()
+	// 4. Clients gRPC (Identity, Post, Feed)
+	// On utilise une fonction helper pour éviter de dupliquer le code de connexion
+	identityConn := mustConnectGrpc(cfg.IdentityURL, "Identity Service")
+	defer identityConn.Close()
+	identityClient := identityv1.NewIdentityServiceClient(identityConn)
 
-	identityClient := identityv1.NewIdentityServiceClient(conn)
+	postConn := mustConnectGrpc(cfg.PostURL, "Post Service")
+	defer postConn.Close()
+	postClient := postv1.NewPostServiceClient(postConn)
 
-	// 4. Création du Serveur GraphQL
+	feedConn := mustConnectGrpc(cfg.FeedURL, "Feed Service")
+	defer feedConn.Close()
+	feedClient := feedv1.NewFeedServiceClient(feedConn)
+
+	// 5. Création du Serveur GraphQL
 	srv := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{
 		Resolvers: &graph.Resolver{
 			IdentityClient: identityClient,
+			PostClient:     postClient,
+			FeedClient:     feedClient,
 		},
 	}))
 
-	// INSTRUMENTATION GRAPHQL (Expert)
-	// Trace chaque champ résolu (ex: query { me { username } })
+	// Instrumentation GraphQL (Expert)
 	srv.Use(otelgqlgen.Middleware())
 
-	// 5. Construction de la chaîne de Middlewares HTTP (L'oignon)
-	// L'ordre d'exécution est : OTEL -> CORS -> AUTH -> GRAPHQL
-
-	// A. Handler GraphQL de base
+	// 6. Chaîne de Middlewares HTTP
 	var h http.Handler = srv
 
-	// B. Middleware Auth (Injecte UserID)
+	// A. Auth (Injecte UserID)
 	h = auth.Middleware(identityClient)(h)
 
-	// C. Middleware CORS
+	// B. CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:19006"},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "baggage", "sentry-trace"}, // baggage est utile pour OTEL
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "baggage", "sentry-trace"},
 		AllowCredentials: true,
 	})
 	h = c.Handler(h)
 
-	// D. Middleware OTEL HTTP (Le plus à l'extérieur)
-	// Il crée le Span racine "HTTP POST /query"
+	// C. OTEL HTTP (Racine)
 	h = otelhttp.NewHandler(h, "GraphQL-Gateway", otelhttp.WithSpanNameFormatter(func(operation string, r *http.Request) string {
 		return fmt.Sprintf("HTTP %s %s", r.Method, r.URL.Path)
 	}))
 
-	// 6. Routage
+	// 7. Routage
 	mux := http.NewServeMux()
 	mux.Handle("/query", h)
-	// Le playground ne doit pas être tracé ou sécurisé, c'est du dev tools
+
 	if cfg.Env != "prod" {
 		mux.Handle("/", playground.Handler("GraphQL playground", "/query"))
 	}
-	// Health check pour K8s (sans middleware lourd)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
-	// 7. Démarrage Graceful
+	// 8. Démarrage Graceful
 	srvHTTP := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: mux,
 	}
 
 	go func() {
-		slog.Info("📡 Server listening", "url", "http://localhost:"+cfg.Port)
+		slog.Info("📡 Gateway listening", "port", cfg.Port)
 		if err := srvHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server error", "error", err)
 			os.Exit(1)
 		}
 	}()
 
-	// Attente signal d'arrêt
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -156,23 +136,27 @@ func main() {
 	slog.Info("👋 Server exited")
 }
 
-// --- HELPERS (Similaires à Identity-Service) ---
+// --- HELPERS ---
 
-func loadConfig() Config {
-	return Config{
-		Port:         getEnv("PORT", "8080"),
-		IdentityURL:  getEnv("IDENTITY_SERVICE_URL", "localhost:50051"),
-		OtelEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
-		Env:          getEnv("APP_ENV", "local"),
+// Helper pour initier les connexions gRPC avec Tracing activé
+func mustConnectGrpc(url string, serviceName string) *grpc.ClientConn {
+	conn, err := grpc.NewClient(
+		url,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()), // Injection Trace Context
+	)
+	if err != nil {
+		slog.Error("Failed to connect to microservice", "service", serviceName, "url", url, "error", err)
+		os.Exit(1)
 	}
+	return conn
 }
 
-func initLogger(cfg Config) {
+func initLogger(cfg config.Config) {
 	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
 	if cfg.Env == "local" {
 		opts.Level = slog.LevelDebug
 	}
-	// En prod -> JSON, En local -> Texte
 	var handler slog.Handler
 	if cfg.Env == "local" {
 		handler = slog.NewTextHandler(os.Stdout, opts)
@@ -182,7 +166,7 @@ func initLogger(cfg Config) {
 	slog.SetDefault(slog.New(handler))
 }
 
-func initTracer(ctx context.Context, cfg Config) (*sdktrace.TracerProvider, error) {
+func initTracer(ctx context.Context, cfg config.Config) (*sdktrace.TracerProvider, error) {
 	exporter, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(cfg.OtelEndpoint),
 		otlptracegrpc.WithInsecure(),
@@ -204,15 +188,7 @@ func initTracer(ctx context.Context, cfg Config) (*sdktrace.TracerProvider, erro
 	)
 
 	otel.SetTracerProvider(tp)
-	// CRUCIAL : Permet de propager le contexte (TraceID) via les headers HTTP et gRPC
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
 	return tp, nil
-}
-
-func getEnv(key, fallback string) string {
-	if v, ok := os.LookupEnv(key); ok {
-		return v
-	}
-	return fallback
 }

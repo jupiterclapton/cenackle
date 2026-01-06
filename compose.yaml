@@ -174,7 +174,9 @@ services:
       - PORT=8080
       - APP_ENV=local
       # Communication inter-conteneurs via le réseau Docker
-      - IDENTITY_SERVICE_URL=identity-service:50051 
+      - IDENTITY_SERVICE_URL=identity-service:50051
+      - POST_SERVICE_URL=post-service:50053
+      - FEED_SERVICE_URL=feed-service:50054
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317 # (Si vous ajoutez Jaeger plus tard)
     depends_on:
       identity-service:

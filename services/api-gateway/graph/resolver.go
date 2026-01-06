@@ -1,6 +1,10 @@
 package graph
 
-import identityv1 "github.com/jupiterclapton/cenackle/gen/identity/v1"
+import (
+	feedv1 "github.com/jupiterclapton/cenackle/gen/feed/v1"
+	identityv1 "github.com/jupiterclapton/cenackle/gen/identity/v1"
+	postv1 "github.com/jupiterclapton/cenackle/gen/post/v1"
+)
 
 // This file will not be regenerated automatically.
 //
@@ -9,4 +13,6 @@ import identityv1 "github.com/jupiterclapton/cenackle/gen/identity/v1"
 
 type Resolver struct {
 	IdentityClient identityv1.IdentityServiceClient
+	PostClient     postv1.PostServiceClient
+	FeedClient     feedv1.FeedServiceClient
 }

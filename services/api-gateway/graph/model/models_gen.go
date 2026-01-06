@@ -18,7 +18,23 @@ type LoginInput struct {
 	Password string `json:"password"`
 }
 
+type Media struct {
+	ID   string `json:"id"`
+	URL  string `json:"url"`
+	Type string `json:"type"`
+}
+
 type Mutation struct {
+}
+
+type Post struct {
+	ID        string    `json:"id"`
+	AuthorID  string    `json:"authorId"`
+	Content   string    `json:"content"`
+	Media     []*Media  `json:"media,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Author    *User     `json:"author"`
 }
 
 type Query struct {

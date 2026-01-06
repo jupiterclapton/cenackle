@@ -1,8 +1,17 @@
-# --- SCALARS ---
-# On définit un scalar pour gérer les dates proprement (ISO string)
+# --------------------------------------------------------
+# SCALARS
+# --------------------------------------------------------
+
+# Gestion propre des dates (ISO 8601 String)
 scalar Time
 
-# --- TYPES ---
+# [FUTURE EXPERT] : scalar Upload 
+# Nécessaire quand on voudra gérer l'upload de fichiers via GraphQL (Multipart Request),
+# bien que l'approche "Presigned URL" soit souvent préférée.
+
+# --------------------------------------------------------
+# TYPES : IDENTITY
+# --------------------------------------------------------
 
 type User {
   id: ID!
@@ -12,6 +21,9 @@ type User {
   isActive: Boolean!
   createdAt: Time!
   updatedAt: Time!
+  
+  # [FUTURE EXPERT] : Avatar, Bio, etc.
+  # avatarUrl: String
 }
 
 type AuthPayload {
@@ -21,7 +33,46 @@ type AuthPayload {
   expiresIn: Int!
 }
 
-# --- INPUTS ---
+# --------------------------------------------------------
+# TYPES : SOCIAL & CONTENT (NOUVEAU)
+# --------------------------------------------------------
+
+type Post {
+  id: ID!
+  
+  # ⚠️ TECHNIQUE : authorId est nécessaire pour que le Resolver Go puisse 
+  # appeler efficacement l'Identity Service pour résoudre le champ 'author'.
+  authorId: String! 
+  
+  content: String!
+  media: [Media!]
+  createdAt: Time!
+  updatedAt: Time!
+  
+  # Champ résolu dynamiquement (Aggregation Pattern)
+  # Le Gateway va chercher les infos User via IdentityService
+  author: User! 
+  
+  # [FUTURE EXPERT] : Compteurs sociaux
+  # likesCount: Int!
+  # commentsCount: Int!
+  # isLikedByMe: Boolean!
+}
+
+type Media {
+  id: ID!
+  url: String!
+  type: String! # "image", "video"
+  
+  # [FUTURE EXPERT] : Différents formats
+  # thumbnail: String
+  # width: Int
+  # height: Int
+}
+
+# --------------------------------------------------------
+# INPUTS
+# --------------------------------------------------------
 
 input RegisterInput {
   email: String!
@@ -38,20 +89,48 @@ input LoginInput {
 input UpdateProfileInput {
   fullName: String
   email: String
+  # [FUTURE EXPERT] : Gestion de l'avatar
 }
 
-# --- API ---
+# [FUTURE EXPERT] : CreatePostInput
+# input CreatePostInput {
+#   content: String!
+#   mediaIds: [String!]
+# }
+
+# --------------------------------------------------------
+# API DEFINITION
+# --------------------------------------------------------
 
 type Query {
+  # --- Identity ---
   # Récupère l'utilisateur courant (basé sur le Token JWT)
   me: User!
+  
+  # [FUTURE EXPERT] : user(id: ID!): User 
+  # Pour voir le profil d'un ami
+  
+  # --- Feed ---
+  # Récupère le fil d'actualité agrégé
+  # Note : offset/limit est simple mais moins performant que la pagination par Curseur (Relay Connection)
+  feed(limit: Int = 20, offset: Int = 0): [Post!]!
 }
 
 type Mutation {
+  # --- Auth ---
   register(input: RegisterInput!): AuthPayload!
   login(input: LoginInput!): AuthPayload!
-  
   refreshToken(token: String!): AuthPayload!
-  
   updateProfile(input: UpdateProfileInput!): User!
+  
+  # [FUTURE EXPERT] : Actions Sociales
+  # createPost(input: CreatePostInput!): Post!
+  # deletePost(id: ID!): Boolean!
+  # followUser(userId: ID!): Boolean!
+  # unfollowUser(userId: ID!): Boolean!
 }
+
+# [FUTURE EXPERT] : Subscriptions
+# type Subscription {
+#   postCreated: Post! # Notification temps réel quand un ami poste
+# }

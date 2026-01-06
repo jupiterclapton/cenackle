@@ -8,9 +8,11 @@ package graph
 import (
 	"context"
 	"errors"
-	"time"
+	"fmt"
 
+	feedv1 "github.com/jupiterclapton/cenackle/gen/feed/v1"
 	identityv1 "github.com/jupiterclapton/cenackle/gen/identity/v1"
+	postv1 "github.com/jupiterclapton/cenackle/gen/post/v1"
 	"github.com/jupiterclapton/cenackle/services/api-gateway/graph/model"
 	"github.com/jupiterclapton/cenackle/services/api-gateway/internal/auth"
 )
@@ -118,6 +120,29 @@ func (r *mutationResolver) UpdateProfile(ctx context.Context, input model.Update
 	return mapProtoUserToGraph(resp.User), nil
 }
 
+// Author is the resolver for the author field.
+func (r *postResolver) Author(ctx context.Context, obj *model.Post) (*model.User, error) {
+	// 1. On récupère l'ID qu'on a stocké à l'étape précédente
+	authorID := obj.AuthorID
+
+	// 2. Appel au Identity Service
+	// Note : Pour l'instant on fait 1 appel par Post (N+1 problem).
+	// Dans une version "Ultra Expert", on utiliserait un "DataLoader" ici.
+	// Mais pour aujourd'hui, c'est très bien comme ça.
+	resp, err := r.IdentityClient.GetUser(ctx, &identityv1.GetUserRequest{
+		UserId: authorID,
+	})
+
+	if err != nil {
+		// En cas d'erreur (auteur supprimé ?), on log mais on ne casse pas tout.
+		// On renvoie une erreur ou un utilisateur "inconnu"
+		return &model.User{ID: authorID, Username: "Unknown"}, nil
+	}
+
+	// 3. Mapping via ton helper (dans mappers.go)
+	return mapProtoUserToGraph(resp.User), nil
+}
+
 // Me is the resolver for the me field.
 func (r *queryResolver) Me(ctx context.Context) (*model.User, error) {
 	userID := auth.ForContext(ctx)
@@ -136,42 +161,85 @@ func (r *queryResolver) Me(ctx context.Context) (*model.User, error) {
 	return mapProtoUserToGraph(resp.User), nil
 }
 
+// Feed is the resolver for the feed field.
+// Feed récupère la timeline (IDs) puis hydrate le contenu (Posts)
+func (r *queryResolver) Feed(ctx context.Context, limit *int, offset *int) ([]*model.Post, error) {
+	// 1. Récupérer l'ID utilisateur depuis le contexte (JWT Middleware)
+	// (Assumons que vous avez une fonction helper pour ça, sinon hardcodez pour le test)
+	// userID := middleware.GetUserID(ctx)
+	userID := "user-trinity-uuid" // ⚠️ TEMPORAIRE POUR TESTER RAPIDEMENT
+
+	// Valeurs par défaut
+	l := int32(20)
+	if limit != nil {
+		l = int32(*limit)
+	}
+	o := int32(0)
+	if offset != nil {
+		o = int32(*offset)
+	}
+
+	// 2. Appel Feed Service (Récupère les IDs)
+	timelineResp, err := r.FeedClient.GetTimeline(ctx, &feedv1.GetTimelineRequest{
+		UserId: userID,
+		Limit:  l,
+		Offset: o,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch timeline: %w", err)
+	}
+
+	if len(timelineResp.Items) == 0 {
+		return []*model.Post{}, nil
+	}
+
+	// 3. Extraction des IDs de posts
+	postIDs := make([]string, len(timelineResp.Items))
+	for i, item := range timelineResp.Items {
+		postIDs[i] = item.PostId
+	}
+
+	// 4. Appel Post Service (Batch Hydration - Récupère le contenu)
+	postsResp, err := r.PostClient.GetPosts(ctx, &postv1.GetPostsRequest{
+		PostIds: postIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch posts content: %w", err)
+	}
+
+	// 5. Mapping Proto -> GraphQL
+	// Note: On ne mappe pas 'Author' ici, on laisse le resolver Post.Author le faire (voir plus bas)
+	gqlPosts := make([]*model.Post, len(postsResp.Posts))
+	for i, p := range postsResp.Posts {
+		gqlPosts[i] = &model.Post{
+			ID:       p.Id,
+			AuthorID: p.AuthorId, // ✅ On passe l'ID pour le resolver suivant
+			Content:  p.Content,
+
+			// ✅ CORRECTION TIME : On passe l'objet time.Time direct.
+			// gqlgen fera le Marshal vers JSON string tout seul.
+			CreatedAt: p.CreatedAt.AsTime(),
+			UpdatedAt: p.UpdatedAt.AsTime(),
+
+			Media: mapProtoMediaToGraph(p.Media),
+
+			// ⚠️ IMPORTANT : On NE remplit PAS Author ici !
+			// Le champ Author sera vide (nil) à cette étape, et c'est normal.
+		}
+	}
+
+	return gqlPosts, nil
+}
+
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
+
+// Post returns PostResolver implementation.
+func (r *Resolver) Post() PostResolver { return &postResolver{r} }
 
 // Query returns QueryResolver implementation.
 func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
 type mutationResolver struct{ *Resolver }
+type postResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
-
-// --- HELPERS ---
-
-// --- HELPERS ---
-
-func mapProtoUserToGraph(u *identityv1.User) *model.User {
-	if u == nil {
-		return nil
-	}
-
-	// Gestion sécurisée des dates (pour éviter le Nil Pointer Dereference)
-	var createdAt time.Time
-	if u.CreatedAt != nil {
-		createdAt = u.CreatedAt.AsTime()
-	}
-
-	var updatedAt time.Time
-	if u.UpdatedAt != nil {
-		updatedAt = u.UpdatedAt.AsTime()
-	}
-
-	return &model.User{
-		ID:        u.Id,
-		Email:     u.Email,
-		Username:  u.Username,
-		FullName:  u.FullName,
-		IsActive:  u.IsActive,
-		CreatedAt: createdAt, // Utilisation de la variable sécurisée
-		UpdatedAt: updatedAt, // Utilisation de la variable sécurisée
-	}
-}
