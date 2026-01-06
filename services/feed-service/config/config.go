@@ -11,6 +11,7 @@ type Config struct {
 	GraphUrl     string
 	OtelEndpoint string
 	Env          string // "local" ou "prod"
+	GRPCPort     string
 }
 
 func Load() Config {
@@ -20,6 +21,7 @@ func Load() Config {
 		GraphUrl:     getEnv("GRAPH_SERVICE_URL", "graph-service:50052"),
 		OtelEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "jaeger:4317"),
 		Env:          getEnv("APP_ENV", "local"),
+		GRPCPort:     getEnv("GRPC_PORT", "50054"),
 	}
 }
 
