@@ -189,10 +189,13 @@ services:
       context: .
       dockerfile: services/feed-service/Dockerfile
     restart: on-failure
+    ports:
+      - "50054:50054"
     environment:
       - REDIS_ADDR=redis:6379
       - NATS_URL=nats://nats:4222
       - GRAPH_SERVICE_URL=graph-service:50052
+      - GRPC_PORT=50054
     depends_on:
       redis:
         condition: service_started

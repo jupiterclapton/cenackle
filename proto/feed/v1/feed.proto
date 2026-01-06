@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package feed.v1;
+
+option go_package = "github.com/jupiterclapton/cenackle/gen/feed/v1;feedv1";
+
+import "google/protobuf/timestamp.proto";
+
+service FeedService {
+  // GetTimeline : Récupère une liste d'IDs de posts (légers) pour un utilisateur
+  rpc GetTimeline(GetTimelineRequest) returns (GetTimelineResponse);
+}
+
+message GetTimelineRequest {
+  string user_id = 1;
+  int32 limit = 2;   // Pagination : combien d'items ?
+  int32 offset = 3;  // Pagination : à partir de quel index ? (Redis ZRANGE)
+  // Note: On pourrait ajouter des filtres (type="video") ici plus tard
+}
+
+message GetTimelineResponse {
+  repeated FeedItem items = 1;
+}
+
+message FeedItem {
+  string post_id = 1;
+  string author_id = 2;
+  string type = 3; // "post", "video", "image"
+  google.protobuf.Timestamp created_at = 4;
+}

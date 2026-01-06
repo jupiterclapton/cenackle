@@ -26,8 +26,8 @@ func NewRedisFeedRepo(client *redis.Client) *RedisFeedRepo {
 func (r *RedisFeedRepo) AddToTimelines(ctx context.Context, userIDs []string, item *domain.FeedItem) error {
 	pipe := r.client.Pipeline()
 
-	// Format du membre : "video:12345-uuid" ou "post:67890-uuid"
-	member := fmt.Sprintf("%s:%s", item.Type, item.PostID)
+	// Format du membre : "VIDEO:user-uuid-123:post-uuid-456"
+	member := fmt.Sprintf("%s:%s:%s", item.Type, item.AuthorID, item.PostID)
 	score := float64(item.CreatedAt.Unix())
 
 	// Batch operation : On ajoute l'entrée pour chaque follower
@@ -56,12 +56,7 @@ func (r *RedisFeedRepo) AddToTimelines(ctx context.Context, userIDs []string, it
 func (r *RedisFeedRepo) GetTimeline(ctx context.Context, req domain.FeedRequest) ([]*domain.FeedItem, error) {
 	key := fmt.Sprintf("timeline:%s", req.UserID)
 
-	// ZRevRange : Du plus récent au plus ancien
-	// Problème : Si on filtre, ZRange par index peut rater des items.
-	// Solution experte : On fetch un peu plus large (ex: limit * 2) et on filtre en Go,
-	// ou on utilise ZScan si le filtrage est complexe.
-	// Ici, pour la simplicité, on utilise ZRevRangeWithScores simple.
-
+	// Pagination Redis (Inclusive)
 	start := req.Offset
 	stop := req.Offset + req.Limit - 1
 
@@ -71,6 +66,8 @@ func (r *RedisFeedRepo) GetTimeline(ctx context.Context, req domain.FeedRequest)
 	}
 
 	items := make([]*domain.FeedItem, 0, len(results))
+
+	// Préparation du filtre (optimisation map)
 	filterMap := make(map[domain.ContentType]bool)
 	for _, t := range req.Types {
 		filterMap[t] = true
@@ -83,13 +80,28 @@ func (r *RedisFeedRepo) GetTimeline(ctx context.Context, req domain.FeedRequest)
 			continue
 		}
 
-		// Parsing "type:post_id"
-		parts := strings.SplitN(member, ":", 2)
-		if len(parts) != 2 {
+		// 🟢 CORRECTION EXPERTE : Parsing robuste
+		// On s'attend à "TYPE:AUTHOR_ID:POST_ID"
+		parts := strings.Split(member, ":")
+
+		// Gestion de la compatibilité (si jamais on a encore des vieilles données)
+		var contentType domain.ContentType
+		var postID, authorID string
+
+		if len(parts) == 3 {
+			// Nouveau format
+			contentType = domain.ContentType(parts[0])
+			authorID = parts[1]
+			postID = parts[2]
+		} else if len(parts) == 2 {
+			// Ancien format (fallback pour ne pas crasher)
+			contentType = domain.ContentType(parts[0])
+			postID = parts[1]
+			authorID = "" // On ne l'a pas
+		} else {
+			// Format inconnu (donnée corrompue ?)
 			continue
 		}
-		contentType := domain.ContentType(parts[0])
-		postID := parts[1]
 
 		// Filtrage Applicatif
 		if hasFilter && !filterMap[contentType] {
@@ -98,6 +110,7 @@ func (r *RedisFeedRepo) GetTimeline(ctx context.Context, req domain.FeedRequest)
 
 		items = append(items, &domain.FeedItem{
 			PostID:    postID,
+			AuthorID:  authorID, // ✅ Maintenant c'est rempli
 			Type:      contentType,
 			CreatedAt: time.Unix(int64(z.Score), 0),
 		})
